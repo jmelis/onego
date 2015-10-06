@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/OpenNebula/goca"
 	"github.com/codegangsta/cli"
@@ -17,7 +18,40 @@ func exitError(msg string) {
 func main() {
 	if _, err := goca.SystemVersion(); err != nil {
 		log.Fatal(err)
+func checkFlagsIncompatible(c *cli.Context, flags ...string) {
+	count := 0
+	fflags := make([]string, len(flags))
+	for i, f := range flags {
+		fflags[i] = "--" + f
+
+		if c.IsSet(f) {
+			count++
+		}
 	}
+
+	if count > 1 {
+		msg := "Specify only one of the following flags: " + strings.Join(fflags, ", ")
+		exitError(msg)
+	}
+}
+
+func checkFlagsMust(c *cli.Context, flags ...string) {
+	count := 0
+	fflags := make([]string, len(flags))
+	for i, f := range flags {
+		fflags[i] = "--" + f
+
+		if c.IsSet(f) {
+			count++
+		}
+	}
+
+	if count < 1 {
+		msg := "Specify one of the following flags: " + strings.Join(fflags, ", ")
+		exitError(msg)
+	}
+
+}
 
 	app := cli.NewApp()
 	app.Name = "onego"
