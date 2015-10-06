@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/OpenNebula/goca"
 	"github.com/codegangsta/cli"
@@ -94,6 +96,52 @@ func main() {
 				},
 			},
 		},
+		{
+			Name:   "ssh",
+			Usage:  "SSH to a VM",
+			Action: cmdSSH,
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "id",
+					Value: -1,
+					Usage: "Id of the VM.",
+				},
+				cli.StringFlag{
+					Name:  "name",
+					Value: "",
+					Usage: "Name of the VM.",
+				},
+				cli.IntFlag{
+					Name:  "nic_id",
+					Value: -1,
+					Usage: "Get the IP of this NIC.",
+				},
+				cli.IntFlag{
+					Name:  "network_id",
+					Value: -1,
+					Usage: "Get the IP of this Network ID.",
+				},
+				cli.StringFlag{
+					Name:  "network",
+					Value: "",
+					Usage: "Get the IP of this Network.",
+				},
+				cli.BoolFlag{
+					Name:  "wait",
+					Usage: "Wait until SSH is ready.",
+				},
+				cli.IntFlag{
+					Name:  "retries",
+					Value: 100,
+					Usage: "When using --wait, try this many times.",
+				},
+				cli.IntFlag{
+					Name:  "interval",
+					Value: 1,
+					Usage: "When using --wait, wait this amount of time (in seconds) between retries.",
+				},
+			},
+		},
 	}
 
 	app.Run(os.Args)
@@ -150,5 +198,105 @@ func cmdIp(c *cli.Context) {
 		}
 
 		fmt.Println(ip)
+	}
+}
+
+func cmdSSH(c *cli.Context) {
+	checkFlagsMust(c, "id", "name")
+	checkFlagsIncompatible(c, "id", "name")
+	checkFlagsIncompatible(c, "nic_id", "network", "network_id")
+
+	var (
+		vm       *goca.VM
+		err      error
+		interval time.Duration = time.Duration(c.Int("interval"))
+
+		baseSSHArgs = []string{
+			"-o", "PasswordAuthentication=no",
+			"-o", "IdentitiesOnly=yes",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-o", "LogLevel=quiet", // suppress "Warning: Permanently added '[localhost]:2022' (ECDSA) to the list of known hosts."
+			"-o", "ConnectionAttempts=3", // retry 3 times if SSH connection fails
+			"-o", "ConnectTimeout=10", // timeout after 10 seconds
+			"-o", "ControlMaster=no", // disable ssh multiplexing
+			"-o", "ControlPath=no",
+			"exit", "0",
+		}
+	)
+
+	if c.IsSet("id") {
+		vm = goca.NewVM(uint(c.Int("id")))
+	} else {
+		if vm, err = goca.NewVMFromName(c.String("name")); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if err = vm.Info(); err != nil {
+		log.Fatal(err)
+	}
+
+	xpath := "/VM/TEMPLATE/NIC"
+
+	if c.IsSet("nic_id") {
+		xpath += fmt.Sprintf("[NIC_ID='%d']", c.Int("nic_id"))
+	} else if c.IsSet("network_id") {
+		xpath += fmt.Sprintf("[NETWORK_ID='%d']", c.Int("network_id"))
+	} else if c.IsSet("network") {
+		xpath += fmt.Sprintf("[NETWORK='%s']", c.String("network"))
+	}
+
+	xpath += "/IP"
+	ip, ok := vm.XPath(xpath)
+	if ok == false {
+		exitError("Unable to find IP.")
+	}
+
+	ssh_args := []string{ip, "-l", "root"}
+	for _, arg := range c.Args() {
+		ssh_args = append(ssh_args, arg)
+	}
+
+	if c.Bool("wait") {
+		// add the wait args
+		for _, arg := range baseSSHArgs {
+			ssh_args = append(ssh_args, arg)
+		}
+
+		for r := 0; r < c.Int("retries"); r++ {
+			if err = vm.Info(); err != nil {
+				exitError(err.Error())
+			}
+
+			vm_state, lcm_state, err := vm.StateString()
+			if err != nil {
+				exitError(err.Error())
+			}
+
+			if strings.Contains(vm_state, "FAIL") || strings.Contains(lcm_state, "FAIL") {
+				exitError("ssh not ready (vm failed).")
+			}
+
+			cmd := exec.Command("ssh", ssh_args...)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err = cmd.Run(); err == nil {
+				fmt.Fprintln(os.Stderr, "ssh ready")
+				return
+			}
+
+			time.Sleep(interval * time.Second)
+		}
+
+		exitError("ssh not ready.")
+
+	} else {
+		cmd := exec.Command("ssh", ssh_args...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
 	}
 }
