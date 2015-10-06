@@ -15,9 +15,6 @@ func exitError(msg string) {
 	os.Exit(1)
 }
 
-func main() {
-	if _, err := goca.SystemVersion(); err != nil {
-		log.Fatal(err)
 func checkFlagsIncompatible(c *cli.Context, flags ...string) {
 	count := 0
 	fflags := make([]string, len(flags))
@@ -53,6 +50,7 @@ func checkFlagsMust(c *cli.Context, flags ...string) {
 
 }
 
+func main() {
 	app := cli.NewApp()
 	app.Name = "onego"
 	app.Usage = "OpenNebula Utility Belt for CLI ninjas"
@@ -62,22 +60,37 @@ func checkFlagsMust(c *cli.Context, flags ...string) {
 	app.Commands = []cli.Command{
 		{
 			Name:   "ip",
-			Usage:  "Get ip of a VM",
+			Usage:  "Get IP of a VM",
 			Action: cmdIp,
 			Flags: []cli.Flag{
 				cli.IntFlag{
 					Name:  "id",
 					Value: -1,
-					Usage: "Id of the VM. If specified, --name will be ignored.",
+					Usage: "Id of the VM.",
 				},
 				cli.StringFlag{
 					Name:  "name",
 					Value: "",
-					Usage: "Name of the VM",
+					Usage: "Name of the VM.",
+				},
+				cli.IntFlag{
+					Name:  "nic_id",
+					Value: -1,
+					Usage: "Get the IP of this NIC.",
+				},
+				cli.IntFlag{
+					Name:  "network_id",
+					Value: -1,
+					Usage: "Get the IP of this Network ID.",
+				},
+				cli.StringFlag{
+					Name:  "network",
+					Value: "",
+					Usage: "Get the IP of this Network.",
 				},
 				cli.BoolFlag{
 					Name:  "all",
-					Usage: "Get all the IPs of the VM.",
+					Usage: "Get all the IPs instead of just the first one.",
 				},
 			},
 		},
@@ -87,34 +100,39 @@ func checkFlagsMust(c *cli.Context, flags ...string) {
 }
 
 func cmdIp(c *cli.Context) {
+	checkFlagsMust(c, "id", "name")
+	checkFlagsIncompatible(c, "id", "name")
+	checkFlagsIncompatible(c, "nic_id", "network", "network_id")
+
 	var (
 		vm  *goca.VM
 		err error
 	)
 
-	id := c.Int("id")
-	name := c.String("name")
-
-	if id == -1 && name == "" {
-		exitError("Please provide --id or --name.")
+	if c.IsSet("id") {
+		vm = goca.NewVM(uint(c.Int("id")))
+	} else {
+		if vm, err = goca.NewVMFromName(c.String("name")); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	if id != -1 {
-		vm = goca.NewVM(uint(id))
-	} else if name != "" {
-		vm, err = goca.NewVMFromName(name)
-	}
-
-	if err != nil {
+	if err = vm.Info(); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := vm.Info(); err != nil {
-		log.Fatal(err)
+	xpath := "/VM/TEMPLATE/NIC"
+
+	if c.IsSet("nic_id") {
+		xpath += fmt.Sprintf("[NIC_ID='%d']", c.Int("nic_id"))
+	} else if c.IsSet("network_id") {
+		xpath += fmt.Sprintf("[NETWORK_ID='%d']", c.Int("network_id"))
+	} else if c.IsSet("network") {
+		xpath += fmt.Sprintf("[NETWORK='%s']", c.String("network"))
 	}
 
 	if c.Bool("all") {
-		iter := vm.XPathIter("/VM/TEMPLATE/NIC")
+		iter := vm.XPathIter(xpath)
 		for iter.Next() {
 			node := iter.Node()
 			ip, ok := node.XPath("IP")
@@ -125,7 +143,8 @@ func cmdIp(c *cli.Context) {
 			fmt.Println(ip)
 		}
 	} else {
-		ip, ok := vm.XPath("/VM/TEMPLATE/NIC/IP")
+		xpath += "/IP"
+		ip, ok := vm.XPath(xpath)
 		if ok == false {
 			exitError("Unable to find IP.")
 		}
