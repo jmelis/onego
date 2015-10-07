@@ -334,6 +334,7 @@ func cmdSSH(c *cli.Context) {
 
 	} else {
 		if ssh_path := which("ssh"); ssh_path != "" {
+			fmt.Println("ssh", strings.Join(ssh_args, " "))
 			ssh_args = append([]string{ssh_path}, ssh_args...)
 			env := os.Environ()
 			err = syscall.Exec(ssh_path, ssh_args, env)
