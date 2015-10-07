@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +55,23 @@ func checkFlagsMust(c *cli.Context, flags ...string) {
 
 }
 
+func GetVM(idArg string) (*goca.VM, error) {
+	if m, _ := regexp.MatchString("^\\d+$", idArg); m {
+		id, err := strconv.Atoi(idArg)
+		if err != nil {
+			return nil, err
+		}
+
+		return goca.NewVM(uint(id)), nil
+	} else {
+		if vm, err := goca.NewVMFromName(idArg); err == nil {
+			return vm, nil
+		} else {
+			return nil, err
+		}
+	}
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "onego"
@@ -63,19 +82,9 @@ func main() {
 	app.Commands = []cli.Command{
 		{
 			Name:   "ip",
-			Usage:  "Get IP of a VM",
+			Usage:  "Get IP of a VM. Args: ID or Name",
 			Action: cmdIp,
 			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "id",
-					Value: -1,
-					Usage: "Id of the VM.",
-				},
-				cli.StringFlag{
-					Name:  "name",
-					Value: "",
-					Usage: "Name of the VM.",
-				},
 				cli.IntFlag{
 					Name:  "nic_id",
 					Value: -1,
@@ -99,19 +108,9 @@ func main() {
 		},
 		{
 			Name:   "ssh",
-			Usage:  "SSH to a VM",
+			Usage:  "SSH to a VM. Args: ID or Name",
 			Action: cmdSSH,
 			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "id",
-					Value: -1,
-					Usage: "Id of the VM.",
-				},
-				cli.StringFlag{
-					Name:  "name",
-					Value: "",
-					Usage: "Name of the VM.",
-				},
 				cli.IntFlag{
 					Name:  "nic_id",
 					Value: -1,
@@ -149,8 +148,6 @@ func main() {
 }
 
 func cmdIp(c *cli.Context) {
-	checkFlagsMust(c, "id", "name")
-	checkFlagsIncompatible(c, "id", "name")
 	checkFlagsIncompatible(c, "nic_id", "network", "network_id")
 
 	var (
@@ -158,12 +155,8 @@ func cmdIp(c *cli.Context) {
 		err error
 	)
 
-	if c.IsSet("id") {
-		vm = goca.NewVM(uint(c.Int("id")))
-	} else {
-		if vm, err = goca.NewVMFromName(c.String("name")); err != nil {
-			log.Fatal(err)
-		}
+	if vm, err = GetVM(c.Args().First()); err != nil {
+		log.Fatal(err)
 	}
 
 	if err = vm.Info(); err != nil {
@@ -203,8 +196,6 @@ func cmdIp(c *cli.Context) {
 }
 
 func cmdSSH(c *cli.Context) {
-	checkFlagsMust(c, "id", "name")
-	checkFlagsIncompatible(c, "id", "name")
 	checkFlagsIncompatible(c, "nic_id", "network", "network_id")
 
 	var (
@@ -226,12 +217,8 @@ func cmdSSH(c *cli.Context) {
 		}
 	)
 
-	if c.IsSet("id") {
-		vm = goca.NewVM(uint(c.Int("id")))
-	} else {
-		if vm, err = goca.NewVMFromName(c.String("name")); err != nil {
-			log.Fatal(err)
-		}
+	if vm, err = GetVM(c.Args().First()); err != nil {
+		log.Fatal(err)
 	}
 
 	if err = vm.Info(); err != nil {
@@ -255,7 +242,7 @@ func cmdSSH(c *cli.Context) {
 	}
 
 	ssh_args := []string{ip, "-l", "root"}
-	ssh_args = append(ssh_args, c.Args()...)
+	ssh_args = append(ssh_args, c.Args()[1:]...)
 
 	if c.Bool("wait") {
 		// add the wait args
