@@ -5,12 +5,56 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/OpenNebula/goca"
 	"github.com/codegangsta/cli"
 )
+
+func which(cmd string) string {
+	var userUid, userGid int
+
+	user, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if userUid, err = strconv.Atoi(user.Uid); err != nil {
+		log.Fatal(err)
+	}
+
+	if userGid, err = strconv.Atoi(user.Gid); err != nil {
+		log.Fatal(err)
+	}
+
+	for _, p := range strings.Split(os.Getenv("PATH"), ":") {
+		f := filepath.Join(p, cmd)
+		if stat, err := os.Stat(f); err == nil {
+			fileUid := stat.Sys().(*syscall.Stat_t).Uid
+			fileGid := stat.Sys().(*syscall.Stat_t).Gid
+
+			mode := stat.Mode().Perm()
+			if mode&0001 != 0 {
+				return f
+			} else if mode&0010 != 0 {
+				if userGid == int(fileGid) {
+					return f
+				}
+			} else if mode&0100 != 0 {
+				if userUid == int(fileUid) {
+					return f
+				}
+			}
+		}
+	}
+
+	return ""
+}
 
 func exitError(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
@@ -254,15 +298,11 @@ func cmdSSH(c *cli.Context) {
 	}
 
 	ssh_args := []string{ip, "-l", "root"}
-	for _, arg := range c.Args() {
-		ssh_args = append(ssh_args, arg)
-	}
+	ssh_args = append(ssh_args, c.Args()...)
 
 	if c.Bool("wait") {
 		// add the wait args
-		for _, arg := range baseSSHArgs {
-			ssh_args = append(ssh_args, arg)
-		}
+		ssh_args = append(ssh_args, baseSSHArgs...)
 
 		for r := 0; r < c.Int("retries"); r++ {
 			if err = vm.Info(); err != nil {
@@ -293,10 +333,15 @@ func cmdSSH(c *cli.Context) {
 		exitError("ssh not ready.")
 
 	} else {
-		cmd := exec.Command("ssh", ssh_args...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Run()
+		if ssh_path := which("ssh"); ssh_path != "" {
+			ssh_args = append([]string{ssh_path}, ssh_args...)
+			env := os.Environ()
+			err = syscall.Exec(ssh_path, ssh_args, env)
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			exitError("SSH executable not found.")
+		}
 	}
 }
