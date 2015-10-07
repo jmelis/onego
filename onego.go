@@ -280,7 +280,6 @@ func cmdSSH(c *cli.Context) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err = cmd.Run(); err == nil {
-				fmt.Fprintln(os.Stderr, "ssh ready")
 				return
 			}
 
